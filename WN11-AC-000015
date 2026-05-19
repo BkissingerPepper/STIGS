@@ -1,0 +1,86 @@
+#Requires -RunAsAdministrator
+<#
+.SYNOPSIS
+    STIG ID   : WN11-AC-000015
+    Title     : The reset period for the account lockout counter must be configured to 15 minutes or greater.
+    Severity  : Medium (CAT II)
+    Vuln ID   : V-253290
+    CCI       : CCI-000044
+
+.DESCRIPTION
+    The account lockout feature, when enabled, prevents brute-force password attacks.
+    The observation window for failed attempts must be at least 15 minutes to
+    ensure failed attempts are properly tracked and lockout is triggered correctly.
+
+.PARAMETER Action
+    Check     - Reports current compliance state (default)
+    Remediate - Applies the STIG fix (sets observation window to 15 minutes)
+    Undo      - Reverts to Windows default (30 minutes)
+
+.EXAMPLE
+    .\WN11-AC-000015.ps1 -Action Check
+    .\WN11-AC-000015.ps1 -Action Remediate
+    .\WN11-AC-000015.ps1 -Action Undo
+#>
+
+param (
+    [ValidateSet("Check","Remediate","Undo")]
+    [string]$Action = "Check"
+)
+
+$StigID     = "WN11-AC-000015"
+$MinWindow  = 15
+$DefaultVal = 30
+
+function Write-Status {
+    param([string]$Message, [string]$Level = "INFO")
+    $color = switch ($Level) {
+        "PASS"  { "Green" }
+        "FAIL"  { "Red" }
+        "INFO"  { "Cyan" }
+        "UNDO"  { "Yellow" }
+        default { "White" }
+    }
+    Write-Host "[$StigID][$Level] $Message" -ForegroundColor $color
+}
+
+function Get-LockoutWindow {
+    $result = net accounts | Select-String "Lockout observation window"
+    if ($result -match ":\s*(\d+)") {
+        return [int]$matches[1]
+    }
+    return $null
+}
+
+function Invoke-Check {
+    Write-Status "Checking lockout observation window..." "INFO"
+    $val = Get-LockoutWindow
+    if ($null -eq $val) {
+        Write-Status "NON-COMPLIANT — Could not retrieve lockout observation window." "FAIL"
+        return
+    }
+    if ($val -ge $MinWindow) {
+        Write-Status "COMPLIANT — Lockout window = $val min (required: >= $MinWindow min)" "PASS"
+    } else {
+        Write-Status "NON-COMPLIANT — Lockout window = $val min (required: >= $MinWindow min)" "FAIL"
+    }
+}
+
+function Invoke-Remediate {
+    Write-Status "Applying fix: setting lockout observation window to $MinWindow minutes..." "INFO"
+    net accounts /lockoutwindow:$MinWindow | Out-Null
+    Write-Status "Fix applied successfully." "PASS"
+    Invoke-Check
+}
+
+function Invoke-Undo {
+    Write-Status "Reverting lockout window to Windows default ($DefaultVal minutes)..." "UNDO"
+    net accounts /lockoutwindow:$DefaultVal | Out-Null
+    Write-Status "Reverted to default ($DefaultVal min). NOTE: System may be NON-COMPLIANT." "UNDO"
+}
+
+switch ($Action) {
+    "Check"     { Invoke-Check }
+    "Remediate" { Invoke-Remediate }
+    "Undo"      { Invoke-Undo }
+}
