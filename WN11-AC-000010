@@ -1,0 +1,87 @@
+#Requires -RunAsAdministrator
+<#
+.SYNOPSIS
+    STIG ID   : WN11-AC-000010
+    Title     : The account lockout duration must be configured to 15 minutes or greater.
+    Severity  : Medium (CAT II)
+    Vuln ID   : V-253289
+    CCI       : CCI-002238
+
+.DESCRIPTION
+    Setting the lockout duration to 0 (until administrator unlocks) or a short
+    period increases the risk of successful brute-force attacks. A minimum of
+    15 minutes ensures attackers cannot quickly retry after being locked out.
+
+.PARAMETER Action
+    Check     - Reports current compliance state (default)
+    Remediate - Applies the STIG fix (sets duration to 15 minutes)
+    Undo      - Reverts to Windows default (30 minutes)
+
+.EXAMPLE
+    .\WN11-AC-000010.ps1 -Action Check
+    .\WN11-AC-000010.ps1 -Action Remediate
+    .\WN11-AC-000010.ps1 -Action Undo
+#>
+
+param (
+    [ValidateSet("Check","Remediate","Undo")]
+    [string]$Action = "Check"
+)
+
+$StigID      = "WN11-AC-000010"
+$MinDuration = 15
+$DefaultVal  = 30
+
+function Write-Status {
+    param([string]$Message, [string]$Level = "INFO")
+    $color = switch ($Level) {
+        "PASS"  { "Green" }
+        "FAIL"  { "Red" }
+        "INFO"  { "Cyan" }
+        "UNDO"  { "Yellow" }
+        default { "White" }
+    }
+    Write-Host "[$StigID][$Level] $Message" -ForegroundColor $color
+}
+
+function Get-LockoutDuration {
+    $result = net accounts | Select-String "Lockout duration"
+    if ($result -match ":\s*(\d+|Never)") {
+        $val = $matches[1]
+        return if ($val -eq "Never") { 99999 } else { [int]$val }
+    }
+    return $null
+}
+
+function Invoke-Check {
+    Write-Status "Checking account lockout duration..." "INFO"
+    $val = Get-LockoutDuration
+    if ($null -eq $val) {
+        Write-Status "NON-COMPLIANT — Could not retrieve lockout duration." "FAIL"
+        return
+    }
+    if ($val -ge $MinDuration) {
+        Write-Status "COMPLIANT — Lockout duration = $val min (required: >= $MinDuration min)" "PASS"
+    } else {
+        Write-Status "NON-COMPLIANT — Lockout duration = $val min (required: >= $MinDuration min)" "FAIL"
+    }
+}
+
+function Invoke-Remediate {
+    Write-Status "Applying fix: setting lockout duration to $MinDuration minutes..." "INFO"
+    net accounts /lockoutduration:$MinDuration | Out-Null
+    Write-Status "Fix applied successfully." "PASS"
+    Invoke-Check
+}
+
+function Invoke-Undo {
+    Write-Status "Reverting lockout duration to Windows default ($DefaultVal minutes)..." "UNDO"
+    net accounts /lockoutduration:$DefaultVal | Out-Null
+    Write-Status "Reverted to default ($DefaultVal min). NOTE: System may be NON-COMPLIANT." "UNDO"
+}
+
+switch ($Action) {
+    "Check"     { Invoke-Check }
+    "Remediate" { Invoke-Remediate }
+    "Undo"      { Invoke-Undo }
+}
