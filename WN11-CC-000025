@@ -1,0 +1,86 @@
+#Requires -RunAsAdministrator
+<#
+.SYNOPSIS
+    STIG ID   : WN11-CC-000025
+    Title     : Autoplay must be disabled for all drives.
+    Severity  : Medium (CAT II)
+    Vuln ID   : V-253389
+    CCI       : CCI-001764
+
+.DESCRIPTION
+    Allowing autoplay to execute may introduce malicious code to a system.
+    Autoplay begins reading from a drive as soon as media is inserted.
+    Setting NoDriveTypeAutoRun to 255 disables autoplay for all drive types.
+
+.PARAMETER Action
+    Check     - Reports current compliance state (default)
+    Remediate - Applies the STIG fix
+    Undo      - Reverts to Windows default
+
+.EXAMPLE
+    .\WN11-CC-000025.ps1 -Action Check
+    .\WN11-CC-000025.ps1 -Action Remediate
+    .\WN11-CC-000025.ps1 -Action Undo
+#>
+
+param (
+    [ValidateSet("Check","Remediate","Undo")]
+    [string]$Action = "Check"
+)
+
+$StigID      = "WN11-CC-000025"
+$RegPath     = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+$RegName     = "NoDriveTypeAutoRun"
+$RequiredVal = 255   # 0xFF — disable for ALL drive types
+$DefaultVal  = 145   # Windows default
+
+function Write-Status {
+    param([string]$Message, [string]$Level = "INFO")
+    $color = switch ($Level) {
+        "PASS"  { "Green" }
+        "FAIL"  { "Red" }
+        "INFO"  { "Cyan" }
+        "UNDO"  { "Yellow" }
+        default { "White" }
+    }
+    Write-Host "[$StigID][$Level] $Message" -ForegroundColor $color
+}
+
+function Invoke-Check {
+    Write-Status "Checking NoDriveTypeAutoRun for all drives..." "INFO"
+    try {
+        $val = (Get-ItemProperty -Path $RegPath -Name $RegName -ErrorAction Stop).$RegName
+        if ($val -eq $RequiredVal) {
+            Write-Status "COMPLIANT — NoDriveTypeAutoRun = $val (0xFF, all drives disabled)" "PASS"
+        } else {
+            Write-Status "NON-COMPLIANT — NoDriveTypeAutoRun = $val (expected: $RequiredVal)" "FAIL"
+        }
+    } catch {
+        Write-Status "NON-COMPLIANT — Registry key/value not found." "FAIL"
+    }
+}
+
+function Invoke-Remediate {
+    Write-Status "Applying fix: disabling Autorun for all drives (NoDriveTypeAutoRun = 255)..." "INFO"
+    if (-not (Test-Path $RegPath)) {
+        New-Item -Path $RegPath -Force | Out-Null
+    }
+    Set-ItemProperty -Path $RegPath -Name $RegName -Value $RequiredVal -Type DWord
+    Write-Status "Fix applied successfully." "PASS"
+    Invoke-Check
+}
+
+function Invoke-Undo {
+    Write-Status "Reverting NoDriveTypeAutoRun to Windows default ($DefaultVal)..." "UNDO"
+    if (-not (Test-Path $RegPath)) {
+        New-Item -Path $RegPath -Force | Out-Null
+    }
+    Set-ItemProperty -Path $RegPath -Name $RegName -Value $DefaultVal -Type DWord
+    Write-Status "Reverted to default ($DefaultVal). NOTE: System is now NON-COMPLIANT." "UNDO"
+}
+
+switch ($Action) {
+    "Check"     { Invoke-Check }
+    "Remediate" { Invoke-Remediate }
+    "Undo"      { Invoke-Undo }
+}
