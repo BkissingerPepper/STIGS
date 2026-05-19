@@ -1,0 +1,88 @@
+#Requires -RunAsAdministrator
+<#
+.SYNOPSIS
+    STIG ID   : WN11-AC-000005
+    Title     : The account lockout threshold must be configured to three or fewer invalid login attempts.
+    Severity  : Medium (CAT II)
+    Vuln ID   : V-253288
+    CCI       : CCI-000044
+
+.DESCRIPTION
+    The account lockout feature, when enabled, prevents brute-force password attacks.
+    The greater the number of allowed logon attempts, the greater the chance of
+    successful brute-force attacks. Setting the lockout threshold to 3 or fewer
+    reduces this risk.
+
+.PARAMETER Action
+    Check     - Reports current compliance state (default)
+    Remediate - Applies the STIG fix (sets threshold to 3)
+    Undo      - Reverts to Windows default (0 = no lockout)
+
+.EXAMPLE
+    .\WN11-AC-000005.ps1 -Action Check
+    .\WN11-AC-000005.ps1 -Action Remediate
+    .\WN11-AC-000005.ps1 -Action Undo
+#>
+
+param (
+    [ValidateSet("Check","Remediate","Undo")]
+    [string]$Action = "Check"
+)
+
+$StigID      = "WN11-AC-000005"
+$MaxAttempts = 3
+$DefaultVal  = 0   # Windows default — no lockout
+
+function Write-Status {
+    param([string]$Message, [string]$Level = "INFO")
+    $color = switch ($Level) {
+        "PASS"  { "Green" }
+        "FAIL"  { "Red" }
+        "INFO"  { "Cyan" }
+        "UNDO"  { "Yellow" }
+        default { "White" }
+    }
+    Write-Host "[$StigID][$Level] $Message" -ForegroundColor $color
+}
+
+function Get-LockoutThreshold {
+    $result = net accounts | Select-String "Lockout threshold"
+    if ($result -match ":\s*(\d+|Never)") {
+        $val = $matches[1]
+        return if ($val -eq "Never") { 0 } else { [int]$val }
+    }
+    return $null
+}
+
+function Invoke-Check {
+    Write-Status "Checking account lockout threshold..." "INFO"
+    $val = Get-LockoutThreshold
+    if ($null -eq $val) {
+        Write-Status "NON-COMPLIANT — Could not retrieve lockout threshold." "FAIL"
+        return
+    }
+    if ($val -ge 1 -and $val -le $MaxAttempts) {
+        Write-Status "COMPLIANT — Lockout threshold = $val (required: 1-$MaxAttempts)" "PASS"
+    } else {
+        Write-Status "NON-COMPLIANT — Lockout threshold = $val (required: 1-$MaxAttempts)" "FAIL"
+    }
+}
+
+function Invoke-Remediate {
+    Write-Status "Applying fix: setting lockout threshold to $MaxAttempts..." "INFO"
+    net accounts /lockoutthreshold:$MaxAttempts | Out-Null
+    Write-Status "Fix applied successfully." "PASS"
+    Invoke-Check
+}
+
+function Invoke-Undo {
+    Write-Status "Reverting lockout threshold to Windows default ($DefaultVal = no lockout)..." "UNDO"
+    net accounts /lockoutthreshold:$DefaultVal | Out-Null
+    Write-Status "Reverted to default. NOTE: System is now NON-COMPLIANT." "UNDO"
+}
+
+switch ($Action) {
+    "Check"     { Invoke-Check }
+    "Remediate" { Invoke-Remediate }
+    "Undo"      { Invoke-Undo }
+}
