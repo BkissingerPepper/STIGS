@@ -1,0 +1,86 @@
+#Requires -RunAsAdministrator
+<#
+.SYNOPSIS
+    STIG ID   : WN11-AU-000505
+    Title     : The Security event log size must be configured to 1024000 KB or greater.
+    Severity  : Medium (CAT II)
+    Vuln ID   : V-253338
+    CCI       : CCI-001849
+ 
+.DESCRIPTION
+    Inadequate log size will cause the log to fill up quickly. This may prevent
+    audit events from being recorded properly and require frequent attention by
+    administrative personnel.
+ 
+.PARAMETER Action
+    Check     - Reports current compliance state (default)
+    Remediate - Applies the STIG fix
+    Undo      - Reverts to Windows default (20480 KB)
+ 
+.EXAMPLE
+    .\WN11-AU-000505.ps1 -Action Check
+    .\WN11-AU-000505.ps1 -Action Remediate
+    .\WN11-AU-000505.ps1 -Action Undo
+#>
+ 
+param (
+    [ValidateSet("Check","Remediate","Undo")]
+    [string]$Action = "Check"
+)
+ 
+$StigID     = "WN11-AU-000505"
+$RegPath    = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\EventLog\Security"
+$RegName    = "MaxSize"
+$RequiredKB = 1024000
+$DefaultKB  = 20480
+ 
+function Write-Status {
+    param([string]$Message, [string]$Level = "INFO")
+    $color = switch ($Level) {
+        "PASS"  { "Green" }
+        "FAIL"  { "Red" }
+        "INFO"  { "Cyan" }
+        "UNDO"  { "Yellow" }
+        default { "White" }
+    }
+    Write-Host "[$StigID][$Level] $Message" -ForegroundColor $color
+}
+ 
+function Invoke-Check {
+    Write-Status "Checking Security event log max size..." "INFO"
+    try {
+        $val = (Get-ItemProperty -Path $RegPath -Name $RegName -ErrorAction Stop).$RegName
+        if ($val -ge $RequiredKB) {
+            Write-Status "COMPLIANT — MaxSize is $val KB (required: >= $RequiredKB KB)" "PASS"
+        } else {
+            Write-Status "NON-COMPLIANT — MaxSize is $val KB (required: >= $RequiredKB KB)" "FAIL"
+        }
+    } catch {
+        Write-Status "NON-COMPLIANT — Registry key/value not found." "FAIL"
+    }
+}
+ 
+function Invoke-Remediate {
+    Write-Status "Applying fix: setting Security log MaxSize to $RequiredKB KB..." "INFO"
+    if (-not (Test-Path $RegPath)) {
+        New-Item -Path $RegPath -Force | Out-Null
+    }
+    Set-ItemProperty -Path $RegPath -Name $RegName -Value $RequiredKB -Type DWord
+    Write-Status "Fix applied successfully." "PASS"
+    Invoke-Check
+}
+ 
+function Invoke-Undo {
+    Write-Status "Reverting Security log MaxSize to Windows default ($DefaultKB KB)..." "UNDO"
+    if (Test-Path $RegPath) {
+        Remove-ItemProperty -Path $RegPath -Name $RegName -ErrorAction SilentlyContinue
+    }
+    wevtutil sl Security /ms:$($DefaultKB * 1024)
+    Write-Status "Reverted to default ($DefaultKB KB). NOTE: System is now NON-COMPLIANT." "UNDO"
+}
+ 
+switch ($Action) {
+    "Check"     { Invoke-Check }
+    "Remediate" { Invoke-Remediate }
+    "Undo"      { Invoke-Undo }
+}
