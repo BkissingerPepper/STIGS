@@ -1,0 +1,81 @@
+#Requires -RunAsAdministrator
+<#
+.SYNOPSIS
+    STIG ID   : WN11-CC-000020
+    Title     : Autoplay must be turned off for non-volume devices.
+    Severity  : Medium (CAT II)
+    Vuln ID   : V-253388
+    CCI       : CCI-001764
+ 
+.DESCRIPTION
+    Allowing autoplay to execute may introduce malicious code to a system.
+    Autoplay begins reading from a drive as soon as media is inserted.
+    Programs or music on audio media may start automatically. Setting this
+    to disabled prevents autoplay from executing for non-volume devices
+    (e.g., cameras or phones).
+ 
+.PARAMETER Action
+    Check     - Reports current compliance state (default)
+    Remediate - Applies the STIG fix
+    Undo      - Reverts to Windows default (autoplay enabled)
+ 
+.EXAMPLE
+    .\WN11-CC-000020.ps1 -Action Check
+    .\WN11-CC-000020.ps1 -Action Remediate
+    .\WN11-CC-000020.ps1 -Action Undo
+#>
+ 
+param (
+    [ValidateSet("Check","Remediate","Undo")]
+    [string]$Action = "Check"
+)
+ 
+$StigID      = "WN11-CC-000020"
+$RegPath     = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer"
+$RegName     = "NoAutoplayfornonVolume"
+$RequiredVal = 1
+$DefaultVal  = 0
+ 
+function Write-Status {
+    param([string]$Message, [string]$Level = "INFO")
+    $color = switch ($Level) {
+        "PASS"  { "Green" }
+        "FAIL"  { "Red" }
+        "INFO"  { "Cyan" }
+        "UNDO"  { "Yellow" }
+        default { "White" }
+    }
+    Write-Host "[$StigID][$Level] $Message" -ForegroundColor $color
+}
+ 
+function Invoke-Check {
+    Write-Status "Checking Autoplay setting for non-volume devices..." "INFO"
+    try {
+        $val = (Get-ItemProperty -Path $RegPath -Name $RegName -ErrorAction Stop).$RegName
+        if ($val -eq $RequiredVal) {
+            Write-Status "COMPLIANT — NoAutoplayfornonVolume = $val (Autoplay disabled)" "PASS"
+        } else {
+            Write-Status "NON-COMPLIANT — NoAutoplayfornonVolume = $val (expected: $RequiredVal)" "FAIL"
+        }
+    } catch {
+        Write-Status "NON-COMPLIANT — Registry key/value not found." "FAIL"
+    }
+}
+ 
+function Invoke-Remediate {
+    Write-Status "Applying fix: disabling Autoplay for non-volume devices..." "INFO"
+    if (-not (Test-Path $RegPath)) {
+        New-Item -Path $RegPath -Force | Out-Null
+    }
+    Set-ItemProperty -Path $RegPath -Name $RegName -Value $RequiredVal -Type DWord
+    Write-Status "Fix applied successfully." "PASS"
+    Invoke-Check
+}
+ 
+function Invoke-Undo {
+    Write-Status "Reverting Autoplay for non-volume devices to default (enabled)..." "UNDO"
+    if (Test-Path $RegPath) {
+        Remove-ItemProperty -Path $RegPath -Name $RegName -ErrorAction SilentlyContinue
+    }
+    Write-Status "Reverted to default. NOTE: System is now NON-COMPLIANT." "UNDO"
+}
