@@ -1,0 +1,81 @@
+#Requires -RunAsAdministrator
+<#
+.SYNOPSIS
+    STIG ID   : WN11-SO-000160
+    Title     : The system must be configured to prevent anonymous users from having the same rights as the Everyone group.
+    Severity  : Medium (CAT II)
+    Vuln ID   : V-253449
+    CCI       : CCI-000366
+
+.DESCRIPTION
+    Access by anonymous users must be restricted. If this setting is enabled,
+    anonymous users have the same rights and permissions as the built-in Everyone
+    group. Disabling this ensures anonymous connections do not inherit the
+    permissions of the Everyone group.
+
+.PARAMETER Action
+    Check     - Reports current compliance state (default)
+    Remediate - Applies the STIG fix
+    Undo      - Reverts to Windows default
+
+.EXAMPLE
+    .\WN11-SO-000160.ps1 -Action Check
+    .\WN11-SO-000160.ps1 -Action Remediate
+    .\WN11-SO-000160.ps1 -Action Undo
+#>
+
+param (
+    [ValidateSet("Check","Remediate","Undo")]
+    [string]$Action = "Check"
+)
+
+$StigID      = "WN11-SO-000160"
+$RegPath     = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa"
+$RegName     = "EveryoneIncludesAnonymous"
+$RequiredVal = 0
+$DefaultVal  = 0   # Windows default is already 0; doc here for clarity
+
+function Write-Status {
+    param([string]$Message, [string]$Level = "INFO")
+    $color = switch ($Level) {
+        "PASS"  { "Green" }
+        "FAIL"  { "Red" }
+        "INFO"  { "Cyan" }
+        "UNDO"  { "Yellow" }
+        default { "White" }
+    }
+    Write-Host "[$StigID][$Level] $Message" -ForegroundColor $color
+}
+
+function Invoke-Check {
+    Write-Status "Checking EveryoneIncludesAnonymous registry value..." "INFO"
+    try {
+        $val = (Get-ItemProperty -Path $RegPath -Name $RegName -ErrorAction Stop).$RegName
+        if ($val -eq $RequiredVal) {
+            Write-Status "COMPLIANT — EveryoneIncludesAnonymous = $val (anonymous access restricted)" "PASS"
+        } else {
+            Write-Status "NON-COMPLIANT — EveryoneIncludesAnonymous = $val (expected: $RequiredVal)" "FAIL"
+        }
+    } catch {
+        Write-Status "NON-COMPLIANT — Registry value not found." "FAIL"
+    }
+}
+
+function Invoke-Remediate {
+    Write-Status "Applying fix: setting EveryoneIncludesAnonymous = $RequiredVal..." "INFO"
+    Set-ItemProperty -Path $RegPath -Name $RegName -Value $RequiredVal -Type DWord
+    Write-Status "Fix applied successfully." "PASS"
+    Invoke-Check
+}
+
+function Invoke-Undo {
+    Write-Status "Reverting EveryoneIncludesAnonymous to default ($DefaultVal)..." "UNDO"
+    Set-ItemProperty -Path $RegPath -Name $RegName -Value $DefaultVal -Type DWord
+    Write-Status "Reverted to default. NOTE: Default is already compliant; this is a no-op." "UNDO"
+}
+
+switch ($Action) {
+    "Check"     { Invoke-Check }
+    "Remediate" { Invoke-Remediate }
+    "Undo"      { Invoke-Undo }
+}
