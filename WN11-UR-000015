@@ -1,0 +1,150 @@
+#Requires -RunAsAdministrator
+<#
+.SYNOPSIS
+    STIG ID   : WN11-UR-000015
+    Title     : The Deny log on locally user right must be configured to include the Guests group.
+    Severity  : Medium (CAT II)
+    Vuln ID   : V-253466
+    CCI       : CCI-000213
+
+.DESCRIPTION
+    Allowing guests to log on locally increases risk of unauthorized access.
+    This script uses secedit to configure the SeDenyInteractiveLogonRight
+    user right, ensuring the Guests group is denied local logon.
+
+.PARAMETER Action
+    Check     - Reports current compliance state (default)
+    Remediate - Applies the STIG fix
+    Undo      - Removes the deny logon restriction for Guests
+
+.EXAMPLE
+    .\WN11-UR-000015.ps1 -Action Check
+    .\WN11-UR-000015.ps1 -Action Remediate
+    .\WN11-UR-000015.ps1 -Action Undo
+
+.NOTES
+    Requires secedit. Uses a temporary .inf file to apply security policy.
+    A gpupdate /force is recommended after applying.
+#>
+
+param (
+    [ValidateSet("Check","Remediate","Undo")]
+    [string]$Action = "Check"
+)
+
+$StigID  = "WN11-UR-000015"
+$TempDir = "$env:TEMP\STIG_$StigID"
+$InfFile = "$TempDir\deny_guest_logon.inf"
+$DbFile  = "$TempDir\secedit.sdb"
+
+function Write-Status {
+    param([string]$Message, [string]$Level = "INFO")
+    $color = switch ($Level) {
+        "PASS"  { "Green" }
+        "FAIL"  { "Red" }
+        "INFO"  { "Cyan" }
+        "UNDO"  { "Yellow" }
+        default { "White" }
+    }
+    Write-Host "[$StigID][$Level] $Message" -ForegroundColor $color
+}
+
+function Get-DenyLogonRights {
+    $exportFile = "$TempDir\current_policy.inf"
+    New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
+    secedit /export /cfg $exportFile /quiet
+    if (Test-Path $exportFile) {
+        $content = Get-Content $exportFile
+        $line = $content | Select-String "SeDenyInteractiveLogonRight"
+        return $line
+    }
+    return $null
+}
+
+function Invoke-Check {
+    Write-Status "Checking SeDenyInteractiveLogonRight for Guests group..." "INFO"
+    $line = Get-DenyLogonRights
+    if ($line -and $line -match "\*S-1-5-32-546") {
+        Write-Status "COMPLIANT — Guests group (S-1-5-32-546) is denied local logon." "PASS"
+    } elseif ($line) {
+        Write-Status "NON-COMPLIANT — SeDenyInteractiveLogonRight exists but Guests group not included." "FAIL"
+        Write-Status "Current value: $line" "INFO"
+    } else {
+        Write-Status "NON-COMPLIANT — SeDenyInteractiveLogonRight not configured." "FAIL"
+    }
+}
+
+function Invoke-Remediate {
+    Write-Status "Applying fix: denying local logon for Guests group..." "INFO"
+    New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
+
+    # Check existing rights to avoid overwriting other entries
+    $line = Get-DenyLogonRights
+    $existing = ""
+    if ($line -match "SeDenyInteractiveLogonRight\s*=\s*(.+)") {
+        $existing = $matches[1].Trim()
+    }
+
+    # Add Guests SID if not already present
+    $guestSID = "*S-1-5-32-546"
+    if ($existing -notmatch [regex]::Escape($guestSID)) {
+        $newVal = if ($existing) { "$existing,$guestSID" } else { $guestSID }
+    } else {
+        $newVal = $existing
+        Write-Status "Guests group already in SeDenyInteractiveLogonRight — no change needed." "PASS"
+        return
+    }
+
+    $infContent = @"
+[Unicode]
+Unicode=yes
+[Version]
+signature="`$CHICAGO`$"
+Revision=1
+[Privilege Rights]
+SeDenyInteractiveLogonRight = $newVal
+"@
+    $infContent | Out-File -FilePath $InfFile -Encoding Unicode
+    secedit /configure /db $DbFile /cfg $InfFile /quiet
+    Write-Status "Fix applied. Running gpupdate..." "INFO"
+    gpupdate /force | Out-Null
+    Write-Status "Fix applied successfully." "PASS"
+    Invoke-Check
+}
+
+function Invoke-Undo {
+    Write-Status "Removing Guests group from SeDenyInteractiveLogonRight..." "UNDO"
+    New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
+
+    $line = Get-DenyLogonRights
+    $existing = ""
+    if ($line -match "SeDenyInteractiveLogonRight\s*=\s*(.+)") {
+        $existing = $matches[1].Trim()
+    }
+
+    $guestSID = "*S-1-5-32-546"
+    $newVal = ($existing -split "," | Where-Object { $_.Trim() -ne $guestSID }) -join ","
+
+    $infContent = @"
+[Unicode]
+Unicode=yes
+[Version]
+signature="`$CHICAGO`$"
+Revision=1
+[Privilege Rights]
+SeDenyInteractiveLogonRight = $newVal
+"@
+    $infContent | Out-File -FilePath $InfFile -Encoding Unicode
+    secedit /configure /db $DbFile /cfg $InfFile /quiet
+    gpupdate /force | Out-Null
+    Write-Status "Guests group removed from deny logon. NOTE: System is now NON-COMPLIANT." "UNDO"
+}
+
+# Ensure temp dir exists
+New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
+
+switch ($Action) {
+    "Check"     { Invoke-Check }
+    "Remediate" { Invoke-Remediate }
+    "Undo"      { Invoke-Undo }
+}
